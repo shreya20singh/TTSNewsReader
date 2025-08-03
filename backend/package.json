@@ -19,7 +19,7 @@
   "license": "MIT",
   "dependencies": {
     "@inworld/nodejs-sdk": "^1.17.0",
-    "@inworld/runtime": "file:inworld-runtime-0.4.3.tgz",
+    "@inworld/runtime": "^0.4.3",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",

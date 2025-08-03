@@ -159,49 +159,7 @@ function requiresTranslation(language) {
     return !language.startsWith('en-');
 }
 
-/**
- * Translate text using Inworld LLM node executor pattern
- * @param {string} text - Text to translate
- * @param {string} targetLanguage - Target language code (e.g., 'ko-KR')
- * @returns {string} Translated text
- */
-async function translateTextWithLLM(text, targetLanguage) {
-    try {
-        if (!requiresTranslation(targetLanguage)) {
-            return text; // No translation needed for English
-        }
-
-        if (!process.env.INWORLD_API_KEY) {
-            console.warn('⚠️  Inworld API key not configured, skipping translation');
-            return text;
-        }
-
-        const targetLanguageName = LANGUAGE_NAMES[targetLanguage] || targetLanguage;
-        console.log(`🌐 Translating text to ${targetLanguageName} using LLM node executor...`);
-
-        // Create LLM node for translation using node executor pattern
-        const llmNode = NodeFactory.createRemoteLLMChatNode({
-            id: `llm_translation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            llmConfig: {
-                provider: LLM_CONFIG.provider,
-                modelName: LLM_CONFIG.modelName,
-                apiKey: process.env.INWORLD_API_KEY,
-                stream: false,
-                textGenerationConfig: LLM_CONFIG
-            }
-        });
-
-        // For now, skip LLM translation and return original text
-        // TODO: Implement proper LLM translation when SDK is properly configured
-        console.log(`⚠️  LLM translation not yet implemented, using original text`);
-        return text;
-
-    } catch (error) {
-        console.error('❌ LLM translation failed:', error.message);
-        console.warn('⚠️  Using original text due to translation failure');
-        return text; // Fallback to original text
-    }
-}
+// Translation is now handled directly in the generateTTSAudio function using the two-graph approach
 
 /**
  * Convert Float32Array audio data to WAV buffer
@@ -270,9 +228,115 @@ async function generateTTSAudio(text, language = 'en-US', voice = 'default') {
         }
 
         const voiceName = getVoiceForLanguage(language, voice);
-        console.log(`📤 Creating TTS graph executor (Voice: ${voiceName})...`);
+        let executor;
+        let graphInput = text;
         
         try {
+            // Check if translation is needed based on language
+            if (requiresTranslation(language)) {
+                const targetLanguageName = LANGUAGE_NAMES[language] || language;
+                console.log(`🔄 Translation enabled for ${targetLanguageName}. Original text:`, text.substring(0, 50) + '...');
+                
+                // Step 1: Create a separate graph just for translation
+                const translationLLMNode = NodeFactory.createRemoteLLMChatNode({
+                    id: `translation_llm_${Date.now()}`,
+                    llmConfig: {
+                        provider: LLM_CONFIG.provider,
+                        modelName: LLM_CONFIG.modelName,
+                        apiKey: process.env.INWORLD_API_KEY,
+                        stream: false,
+                        textGenerationConfig: LLM_CONFIG
+                    }
+                });
+                
+                const translationInputNode = NodeFactory.createProxyNode({
+                    id: `translation_input_${Date.now()}`,
+                    reportToClient: false,
+                });
+                
+                const translationOutputNode = NodeFactory.createProxyNode({
+                    id: `translation_output_${Date.now()}`,
+                    reportToClient: false,
+                });
+                
+                // Build a simple translation graph
+                const translationExecutor = new GraphBuilder(`translation_graph_${Date.now()}`)
+                    .addNode(translationInputNode)
+                    .addNode(translationLLMNode)
+                    .addNode(translationOutputNode)
+                    .addEdge(translationInputNode, translationLLMNode)
+                    .addEdge(translationLLMNode, translationOutputNode)
+                    .setStartNode(translationInputNode)
+                    .setEndNode(translationOutputNode)
+                    .getExecutor();
+                
+                // Create translation prompt based on target language
+                const systemMessage = {
+                    role: 'system',
+                    content: `You are a translation assistant. Translate the given text to ${targetLanguageName}. Only respond with the translated text, nothing else.`,
+                };
+                
+                const userMessage = {
+                    role: 'user',
+                    content: text,
+                };
+                
+                const translationPrompt = {
+                    messages: [systemMessage, userMessage],
+                };
+                
+                // Execute translation graph with translation prompt
+                console.log(`📤 Executing translation graph for ${text.length} characters...`);
+                const translationStream = await translationExecutor.execute(translationPrompt, `translation_${Date.now()}`);
+                
+                // Get translation result
+                const translationResult = await translationStream.next();
+                let translatedText = '';
+                
+                if (translationResult.type === 'CONTENT') {
+                    // Handle non-streaming LLM response
+                    const response = translationResult.data;
+                    translatedText = response.content;
+                    console.log(`📥 Translation Result (non-streaming): ${translatedText.substring(0, 50)}...`);
+                } else if (translationResult.type === 'CONTENT_STREAM') {
+                    // Handle streaming LLM response
+                    const streamIterator = translationResult.data;
+                    
+                    // Collect all chunks from the stream
+                    while (true) {
+                        const chunk = await streamIterator.next();
+                        if (chunk.done) {
+                            break;
+                        }
+                        
+                        if (chunk.text) {
+                            translatedText += chunk.text;
+                        }
+                    }
+                    
+                    console.log(`📡 Translation Result (streaming): ${translatedText.substring(0, 50)}...`);
+                }
+                
+                // Clean up translation resources
+                translationExecutor.closeExecution(translationStream);
+                translationExecutor.stopExecutor();
+                translationExecutor.cleanupAllExecutions();
+                translationExecutor.destroy();
+                
+                if (!translatedText || translatedText.trim().length === 0) {
+                    console.warn('⚠️ Translation returned empty result, using original text');
+                } else {
+                    // Use the translated text as input to the TTS graph
+                    graphInput = translatedText;
+                }
+            } else {
+                // Translation is disabled - use original text
+                console.log('🎵 No translation needed. Using original text for TTS.');
+            }
+            
+            // Step 2: Now create a TTS graph with the translated text
+            console.log(`📤 Creating TTS graph executor (Voice: ${voiceName})...`);
+            
             // Create TTS component following node_tts template pattern
             const ttsComponent = ComponentFactory.createRemoteTTSComponent({
                 id: `tts_component_${Date.now()}`,
@@ -314,7 +378,7 @@ async function generateTTSAudio(text, language = 'en-US', voice = 'default') {
             });
 
             // Build the graph: input -> TTS -> output
-            const executor = new GraphBuilder(`tts_graph_${Date.now()}`)
+            executor = new GraphBuilder(`tts_graph_${Date.now()}`)
                 .addComponent(ttsComponent)        // Add TTS component to the graph
                 .addNode(inputProxyNode)           // Add input node
                 .addNode(ttsNode)                  // Add TTS node
@@ -325,10 +389,10 @@ async function generateTTSAudio(text, language = 'en-US', voice = 'default') {
                 .setEndNode(outputProxyNode)       // Set output as end node
                 .getExecutor();                    // Get the executor
 
-            console.log(`🎵 Executing TTS graph for ${text.length} characters...`);
+            console.log(`🎵 Executing TTS graph for ${graphInput.length} characters...`);
 
             // Execute the graph with the text input
-            const outputStream = await executor.execute(text, `execution_${Date.now()}`);
+            const outputStream = await executor.execute(graphInput, `execution_${Date.now()}`);
             
             // Get TTS stream from the output
             const ttsResult = await outputStream.next();
@@ -364,6 +428,16 @@ async function generateTTSAudio(text, language = 'en-US', voice = 'default') {
                 // Convert Float32Array audio data to WAV buffer
                 const audioBuffer = convertAudioDataToWAV(allAudioData, 22050);
                 console.log(`✅ TTS graph executor completed successfully (${audioBuffer.length} bytes)`);
+                
+                // Save audio to file for debugging/reference (optional)
+                const outputDir = path.join(__dirname, 'data-output', 'tts_samples');
+                if (!fs.existsSync(outputDir)) {
+                    fs.mkdirSync(outputDir, { recursive: true });
+                }
+                const outputFile = path.join(outputDir, `tts_output_${Date.now()}.wav`);
+                fs.writeFileSync(outputFile, audioBuffer);
+                console.log(`💾 Audio sample saved to ${outputFile}`);
+                
                 return audioBuffer;
             } else {
                 console.warn('⚠️  TTS graph returned empty audio data');
@@ -379,7 +453,7 @@ async function generateTTSAudio(text, language = 'en-US', voice = 'default') {
                 const response = await axios.post(
                     `${INWORLD_API_BASE}/tts/v1/voice`,
                     {
-                        text: text,
+                        text: graphInput,
                         voiceId: voiceName,
                         modelId: DEFAULT_MODEL
                     },
@@ -402,7 +476,7 @@ async function generateTTSAudio(text, language = 'en-US', voice = 'default') {
             }
             
             console.warn('🧪 Using test audio fallback...');
-            return generateTestAudio(text);
+            return generateTestAudio(graphInput);
         }
 
     } catch (error) {
@@ -510,7 +584,7 @@ app.get('/news-audio', async (req, res) => {
             country = 'us', 
             language = 'en-US', 
             voice = 'default',
-            pageSize = 10 
+            pageSize = 1 
         } = req.query;
 
         console.log(`📰 News+TTS request: ${category}/${country}, ${language}/${voice}`);
