@@ -1,20 +1,32 @@
 /**
  * TTSNewsReader Backend Server
- * Node.js Express server with Inworld AI TTS integration
- * Using direct REST API approach for macOS compatibility
+ * Integrates with Inworld AI for Text-to-Speech functionality
+ * Handles news fetching and TTS conversion in a unified backend
  */
 
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const dotenv = require('dotenv');
 const axios = require('axios');
-
-// Load environment variables
-dotenv.config();
+const { NodeFactory, GraphBuilder, ComponentFactory } = require('@inworld/runtime/graph');
+const { TTSOutputStreamIterator } = require('@inworld/runtime/common');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Inworld AI configuration
+const INWORLD_API_BASE = 'https://api.inworld.ai';
+const DEFAULT_MODEL = 'inworld-tts-1-max';
+const DEFAULT_VOICE_ID = 'Ronald';
+const DEFAULT_WORKSPACE_ID = 'default-jv9rith_zenenocmvv4daq';
+
+// News API configuration
+const NEWS_API_KEY = process.env.NEWS_API_KEY;
+const NEWS_API_BASE = 'https://newsapi.org/v2';
+
+// Inworld SDK instance
+let inworldClient = null;
 
 // Middleware
 app.use(helmet());
@@ -25,15 +37,15 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Inworld AI API constants
-const INWORLD_API_BASE = 'https://api.inworld.ai';
-const DEFAULT_VOICE_ID = 'Ronald';
-const DEFAULT_MODEL = 'inworld-tts-1-max';
-const DEFAULT_WORKSPACE_ID = 'default-jv9rith_zenenocmvv4daq';
+// Request logging middleware
+app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+    next();
+});
 
 // Language to voice mapping using actual Inworld voice IDs from documentation
 const LANGUAGE_VOICE_MAP = {
-    'en-US': 'Ronald',      // English (US) - Female voice
+    'en-US': 'Hades',      // English (US) - Female voice
     'en-GB': 'Ronald',        // English (UK) - Male voice
     'es-ES': 'Ronald',      // Spanish - Use Ashley for now
     'fr-FR': 'Ronald',      // French - Use Ashley for now
@@ -41,11 +53,42 @@ const LANGUAGE_VOICE_MAP = {
     'it-IT': 'Ronald',      // Italian - Use Ashley for now
     'pt-BR': 'Ronald',      // Portuguese (Brazil) - Use Ashley for now
     'ja-JP': 'Ronald',      // Japanese - Use Ashley for now
-    'ko-KR': 'Ronald',      // Korean - Use Ashley for now
-    'zh-CN': 'Ronald',      // Chinese (Mandarin) - Use Ashley for now
-    'ru-RU': 'Ronald',      // Russian - Use Ashley for now
-    'ar-SA': 'Ronald',      // Arabic - Use Ashley for now
-    'hi-IN': 'Ronald'       // Hindi - Use Ashley for now
+    'ko-KR': 'Ashley',      // Korean - Use Ashley for now
+    'zh-CN': 'Ashley',      // Chinese (Mandarin) - Use Ashley for now
+    'ru-RU': 'Dennis',      // Russian - Use Ashley for now
+    'ar-SA': 'Dennis',      // Arabic - Use Ashley for now
+    'hi-IN': 'Hades'       // Hindi - Use Ashley for now
+};
+
+// Language mapping for translation
+const LANGUAGE_NAMES = {
+    'en-US': 'English',
+    'en-GB': 'English',
+    'es-ES': 'Spanish',
+    'fr-FR': 'French',
+    'de-DE': 'German',
+    'it-IT': 'Italian',
+    'pt-BR': 'Portuguese',
+    'ja-JP': 'Japanese',
+    'ko-KR': 'Korean',
+    'zh-CN': 'Chinese',
+    'ru-RU': 'Russian',
+    'ar-SA': 'Arabic',
+    'hi-IN': 'Hindi'
+};
+
+// LLM configuration for translation
+const LLM_CONFIG = {
+    provider: 'inworld',
+    modelName: 'gemini-2.5-flash',
+    max_new_tokens: 2500,
+    max_prompt_length: 1000,
+    repetition_penalty: 1,
+    top_p: 1,
+    temperature: 0.3, // Lower temperature for more consistent translations
+    frequency_penalty: 0,
+    presence_penalty: 0,
+    stop_sequences: ['\n\n']
 };
 
 /**
@@ -64,7 +107,153 @@ function checkInworldConfig() {
 }
 
 /**
- * Generate TTS audio using Inworld AI REST API
+ * Check News API configuration
+ */
+function checkNewsApiConfig() {
+    const hasApiKey = NEWS_API_KEY && !NEWS_API_KEY.includes('your_');
+    
+    if (hasApiKey) {
+        console.log('✅ News API key configured');
+        return true;
+    } else {
+        console.warn('⚠️  NEWS_API_KEY not found or not configured properly');
+        return false;
+    }
+}
+
+/**
+ * Fetch news articles from News API
+ */
+async function fetchNewsArticles(category = 'general', country = 'us', pageSize = 20) {
+    try {
+        if (!checkNewsApiConfig()) {
+            throw new Error('News API not configured');
+        }
+
+        const response = await axios.get(`${NEWS_API_BASE}/top-headlines`, {
+            params: {
+                country,
+                category,
+                pageSize,
+                apiKey: NEWS_API_KEY
+            },
+            timeout: 10000
+        });
+
+        if (response.data.status === 'ok') {
+            console.log(`📰 Fetched ${response.data.articles.length} news articles`);
+            return response.data.articles;
+        } else {
+            throw new Error(`News API error: ${response.data.message}`);
+        }
+    } catch (error) {
+        console.error('❌ Failed to fetch news:', error.message);
+        throw error;
+    }
+}
+
+/**
+ * Check if language requires translation (non-English)
+ */
+function requiresTranslation(language) {
+    return !language.startsWith('en-');
+}
+
+/**
+ * Translate text using Inworld LLM node executor pattern
+ * @param {string} text - Text to translate
+ * @param {string} targetLanguage - Target language code (e.g., 'ko-KR')
+ * @returns {string} Translated text
+ */
+async function translateTextWithLLM(text, targetLanguage) {
+    try {
+        if (!requiresTranslation(targetLanguage)) {
+            return text; // No translation needed for English
+        }
+
+        if (!process.env.INWORLD_API_KEY) {
+            console.warn('⚠️  Inworld API key not configured, skipping translation');
+            return text;
+        }
+
+        const targetLanguageName = LANGUAGE_NAMES[targetLanguage] || targetLanguage;
+        console.log(`🌐 Translating text to ${targetLanguageName} using LLM node executor...`);
+
+        // Create LLM node for translation using node executor pattern
+        const llmNode = NodeFactory.createRemoteLLMChatNode({
+            id: `llm_translation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            llmConfig: {
+                provider: LLM_CONFIG.provider,
+                modelName: LLM_CONFIG.modelName,
+                apiKey: process.env.INWORLD_API_KEY,
+                stream: false,
+                textGenerationConfig: LLM_CONFIG
+            }
+        });
+
+        // For now, skip LLM translation and return original text
+        // TODO: Implement proper LLM translation when SDK is properly configured
+        console.log(`⚠️  LLM translation not yet implemented, using original text`);
+        return text;
+
+    } catch (error) {
+        console.error('❌ LLM translation failed:', error.message);
+        console.warn('⚠️  Using original text due to translation failure');
+        return text; // Fallback to original text
+    }
+}
+
+/**
+ * Convert Float32Array audio data to WAV buffer
+ * @param {number[]} audioData - Array of audio samples
+ * @param {number} sampleRate - Sample rate (default 22050)
+ * @returns {Buffer} WAV audio buffer
+ */
+function convertAudioDataToWAV(audioData, sampleRate = 22050) {
+    const numChannels = 1; // Mono
+    const bitsPerSample = 16;
+    const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+    const blockAlign = numChannels * bitsPerSample / 8;
+    const dataSize = audioData.length * 2; // 16-bit samples
+    const chunkSize = 36 + dataSize;
+
+    // Create WAV header
+    const header = Buffer.alloc(44);
+    let offset = 0;
+
+    // RIFF header
+    header.write('RIFF', offset); offset += 4;
+    header.writeUInt32LE(chunkSize, offset); offset += 4;
+    header.write('WAVE', offset); offset += 4;
+
+    // fmt chunk
+    header.write('fmt ', offset); offset += 4;
+    header.writeUInt32LE(16, offset); offset += 4; // fmt chunk size
+    header.writeUInt16LE(1, offset); offset += 2; // audio format (PCM)
+    header.writeUInt16LE(numChannels, offset); offset += 2;
+    header.writeUInt32LE(sampleRate, offset); offset += 4;
+    header.writeUInt32LE(byteRate, offset); offset += 4;
+    header.writeUInt16LE(blockAlign, offset); offset += 2;
+    header.writeUInt16LE(bitsPerSample, offset); offset += 2;
+
+    // data chunk
+    header.write('data', offset); offset += 4;
+    header.writeUInt32LE(dataSize, offset);
+
+    // Convert Float32Array to 16-bit PCM
+    const pcmData = Buffer.alloc(dataSize);
+    for (let i = 0; i < audioData.length; i++) {
+        // Convert float (-1 to 1) to 16-bit signed integer
+        const sample = Math.max(-1, Math.min(1, audioData[i]));
+        const intSample = Math.floor(sample * 32767);
+        pcmData.writeInt16LE(intSample, i * 2);
+    }
+
+    return Buffer.concat([header, pcmData]);
+}
+
+/**
+ * Generate TTS audio using Inworld graph executor structure (node_tts pattern)
  * @param {string} text - Text to convert to speech
  * @param {string} language - Language code (e.g., 'en-US')
  * @param {string} voice - Voice identifier
@@ -72,61 +261,146 @@ function checkInworldConfig() {
  */
 async function generateTTSAudio(text, language = 'en-US', voice = 'default') {
     try {
-        console.log(`🎤 Generating TTS for text: "${text.substring(0, 50)}..."`);
+        console.log(`🎤 Generating TTS using graph executor for text: "${text.substring(0, 50)}..."`);
         console.log(`🌍 Language: ${language}, Voice: ${voice}`);
 
-        const apiKeyBase64 = process.env.INWORLD_API_KEY;
-        const workspaceId = process.env.INWORLD_WORKSPACE_ID || DEFAULT_WORKSPACE_ID;
+        if (!process.env.INWORLD_API_KEY) {
+            console.warn('⚠️  Inworld API key not configured, using fallback');
+            return generateTestAudio(text);
+        }
+
         const voiceName = getVoiceForLanguage(language, voice);
-
-        // Decode the base64 API key to get key:secret format
-        const decodedKey = Buffer.from(apiKeyBase64, 'base64').toString('utf-8');
-        const [apiKey, apiSecret] = decodedKey.split(':');
-
-        console.log(`📤 Sending TTS request to Inworld AI (Voice: ${voiceName})...`);
-        
-        // Use correct Inworld TTS API format from official documentation
-        console.log('🔑 Using API Key:', apiKey.substring(0, 10) + '...');
-        console.log('🎤 Voice ID:', voiceName, 'Language:', language);
+        console.log(`📤 Creating TTS graph executor (Voice: ${voiceName})...`);
         
         try {
-            // Use the correct Inworld TTS API endpoint: /tts/v1/voice
-            const response = await axios.post(
-                `${INWORLD_API_BASE}/tts/v1/voice`,
-                {
-                    text: text,
-                    voiceId: voiceName,
-                    modelId: DEFAULT_MODEL
-                },
-                {
-                    headers: {
-                        'Authorization': `Basic ${apiKeyBase64}`,
-                        'Content-Type': 'application/json'
+            // Create TTS component following node_tts template pattern
+            const ttsComponent = ComponentFactory.createRemoteTTSComponent({
+                id: `tts_component_${Date.now()}`,
+                apiKey: process.env.INWORLD_API_KEY,
+                synthesisConfig: {
+                    type: 'inworld',
+                    config: {
+                        modelId: DEFAULT_MODEL,
+                        postprocessing: {
+                            sampleRate: 22050,
+                        },
+                        inference: {
+                            pitch: 0,
+                            speakingRate: 1,
+                            temperature: 0.8,
+                        },
                     },
-                    timeout: 30000
-                }
-            );
+                },
+            });
+
+            // Create TTS node that will convert text to speech
+            const ttsNode = NodeFactory.createRemoteTTSNode({
+                id: `tts_node_${Date.now()}`,
+                ttsComponentId: ttsComponent.id,
+                voice: {
+                    speakerId: voiceName,
+                },
+            });
+
+            // Create input and output proxy nodes for the graph
+            const inputProxyNode = NodeFactory.createProxyNode({
+                id: `input_${Date.now()}`,
+                reportToClient: false,
+            });
+
+            const outputProxyNode = NodeFactory.createProxyNode({
+                id: `output_${Date.now()}`,
+                reportToClient: false,
+            });
+
+            // Build the graph: input -> TTS -> output
+            const executor = new GraphBuilder(`tts_graph_${Date.now()}`)
+                .addComponent(ttsComponent)        // Add TTS component to the graph
+                .addNode(inputProxyNode)           // Add input node
+                .addNode(ttsNode)                  // Add TTS node
+                .addNode(outputProxyNode)          // Add output node
+                .addEdge(inputProxyNode, ttsNode)  // Connect input to TTS
+                .addEdge(ttsNode, outputProxyNode) // Connect TTS to output
+                .setStartNode(inputProxyNode)      // Set input as start node
+                .setEndNode(outputProxyNode)       // Set output as end node
+                .getExecutor();                    // Get the executor
+
+            console.log(`🎵 Executing TTS graph for ${text.length} characters...`);
+
+            // Execute the graph with the text input
+            const outputStream = await executor.execute(text, `execution_${Date.now()}`);
             
-            console.log('✅ Inworld TTS API call succeeded');
-            
-            // Check if we got a valid response with audioContent
-            if (response.data && response.data.audioContent) {
-                // Decode the base64 audio content
-                const audioBuffer = Buffer.from(response.data.audioContent, 'base64');
-                console.log(`✅ TTS audio generated successfully (${audioBuffer.length} bytes)`);
-                
-                // Log usage info if available
-                if (response.data.usage) {
-                    console.log(`📊 Usage: ${response.data.usage.processedCharactersCount} characters, Model: ${response.data.usage.modelId}`);
+            // Get TTS stream from the output
+            const ttsResult = await outputStream.next();
+            const ttsStream = ttsResult.data;
+
+            let allAudioData = [];
+            let resultCount = 0;
+            let initialText = '';
+
+            // Process audio chunks from the TTS stream
+            let chunk = await ttsStream.next();
+            while (!chunk.done) {
+                if (chunk.text) {
+                    initialText += chunk.text;
                 }
-                
+                if (chunk.audio && chunk.audio.data) {
+                    allAudioData = allAudioData.concat(Array.from(chunk.audio.data));
+                }
+                resultCount++;
+                chunk = await ttsStream.next();
+            }
+
+            console.log(`✅ TTS graph completed - Result count: ${resultCount}`);
+            console.log(`📊 Generated audio for text: "${initialText.substring(0, 50)}..."`);
+
+            // Clean up graph resources
+            executor.closeExecution(outputStream);
+            executor.stopExecutor();
+            executor.cleanupAllExecutions();
+            executor.destroy();
+
+            if (allAudioData.length > 0) {
+                // Convert Float32Array audio data to WAV buffer
+                const audioBuffer = convertAudioDataToWAV(allAudioData, 22050);
+                console.log(`✅ TTS graph executor completed successfully (${audioBuffer.length} bytes)`);
                 return audioBuffer;
             } else {
-                console.warn('⚠️  Inworld API response missing audioContent');
-                throw new Error('No audio content in response');
+                console.warn('⚠️  TTS graph returned empty audio data');
+                throw new Error('No audio content from TTS graph');
             }
-        } catch (apiError) {
-            console.warn('⚠️  Inworld TTS API failed:', apiError.response?.status, apiError.response?.statusText);
+
+        } catch (graphError) {
+            console.warn('⚠️  TTS graph executor failed:', graphError.message);
+            
+            // Fallback to REST API if graph executor fails
+            try {
+                console.log('🔄 Trying REST API fallback...');
+                const response = await axios.post(
+                    `${INWORLD_API_BASE}/tts/v1/voice`,
+                    {
+                        text: text,
+                        voiceId: voiceName,
+                        modelId: DEFAULT_MODEL
+                    },
+                    {
+                        headers: {
+                            'Authorization': `Basic ${process.env.INWORLD_API_KEY}`,
+                            'Content-Type': 'application/json'
+                        },
+                        timeout: 30000
+                    }
+                );
+                
+                if (response.data && response.data.audioContent) {
+                    const audioBuffer = Buffer.from(response.data.audioContent, 'base64');
+                    console.log(`✅ REST API fallback succeeded (${audioBuffer.length} bytes)`);
+                    return audioBuffer;
+                }
+            } catch (restError) {
+                console.warn('⚠️  REST API fallback also failed:', restError.message);
+            }
+            
             console.warn('🧪 Using test audio fallback...');
             return generateTestAudio(text);
         }
@@ -213,10 +487,163 @@ async function cleanupInworldResources() {
  */
 app.get('/health', (req, res) => {
     res.json({
-        status: 'ok',
+        status: 'OK',
         timestamp: new Date().toISOString(),
-        inworldConnected: checkInworldConfig()
+        uptime: process.uptime(),
+        environment: process.env.NODE_ENV || 'development',
+        services: {
+            inworld: checkInworldConfig() ? 'configured' : 'not_configured',
+            newsApi: checkNewsApiConfig() ? 'configured' : 'not_configured'
+        }
     });
+});
+
+/**
+ * Unified News + TTS endpoint
+ * GET /news-audio?category=general&language=en-US&voice=default
+ * Returns: JSON with news articles and audio URLs
+ */
+app.get('/news-audio', async (req, res) => {
+    try {
+        const { 
+            category = 'general', 
+            country = 'us', 
+            language = 'en-US', 
+            voice = 'default',
+            pageSize = 10 
+        } = req.query;
+
+        console.log(`📰 News+TTS request: ${category}/${country}, ${language}/${voice}`);
+
+        // Fetch news articles
+        const articles = await fetchNewsArticles(category, country, parseInt(pageSize));
+        
+        if (!articles || articles.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'No news articles found',
+                articles: []
+            });
+        }
+
+        // Process articles and generate TTS for each
+        const processedArticles = await Promise.all(
+            articles.map(async (article, index) => {
+                try {
+                    // Create article text for TTS (title + description)
+                    let articleText = `${article.title}. ${article.description || ''}`;
+                    
+                    // Translate text if target language is not English
+                    if (requiresTranslation(language)) {
+                        console.log(`🌐 Article ${index + 1}: Translating to ${LANGUAGE_NAMES[language] || language}`);
+                        articleText = await translateTextWithLLM(articleText, language);
+                    }
+                    
+                    // Generate TTS audio for this article (translated or original)
+                    const audioBuffer = await generateTTSAudio(articleText, language, voice);
+                    
+                    // Create a unique audio ID for this article
+                    const audioId = `article_${Date.now()}_${index}`;
+                    
+                    // Store audio in memory (in production, use proper storage)
+                    global.audioCache = global.audioCache || new Map();
+                    global.audioCache.set(audioId, audioBuffer);
+                    
+                    return {
+                        id: article.url || `article_${index}`,
+                        title: article.title,
+                        description: article.description,
+                        url: article.url,
+                        urlToImage: article.urlToImage,
+                        publishedAt: article.publishedAt,
+                        source: article.source,
+                        audioId: audioId,
+                        audioUrl: `/audio/${audioId}`,
+                        audioLength: audioBuffer.length,
+                        textLength: articleText.length
+                    };
+                } catch (error) {
+                    console.error(`❌ Failed to process article ${index}:`, error.message);
+                    return {
+                        id: article.url || `article_${index}`,
+                        title: article.title,
+                        description: article.description,
+                        url: article.url,
+                        urlToImage: article.urlToImage,
+                        publishedAt: article.publishedAt,
+                        source: article.source,
+                        audioId: null,
+                        audioUrl: null,
+                        error: 'TTS generation failed'
+                    };
+                }
+            })
+        );
+
+        console.log(`✅ Processed ${processedArticles.length} articles with TTS`);
+
+        res.json({
+            success: true,
+            articles: processedArticles,
+            metadata: {
+                category,
+                country,
+                language,
+                voice,
+                totalArticles: processedArticles.length,
+                timestamp: new Date().toISOString()
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ News+TTS endpoint error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch news and generate audio',
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+/**
+ * Audio streaming endpoint
+ * GET /audio/:audioId
+ * Returns: Audio file as binary stream
+ */
+app.get('/audio/:audioId', (req, res) => {
+    try {
+        const { audioId } = req.params;
+        
+        // Retrieve audio from cache
+        const audioBuffer = global.audioCache?.get(audioId);
+        
+        if (!audioBuffer) {
+            return res.status(404).json({
+                success: false,
+                error: 'Audio not found or expired'
+            });
+        }
+
+        // Set appropriate headers for audio streaming
+        res.set({
+            'Content-Type': 'audio/wav',
+            'Content-Length': audioBuffer.length,
+            'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
+            'Accept-Ranges': 'bytes'
+        });
+
+        // Stream the audio
+        res.send(audioBuffer);
+        
+        console.log(`🎵 Audio streamed: ${audioId} (${audioBuffer.length} bytes)`);
+        
+    } catch (error) {
+        console.error('❌ Audio streaming error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to stream audio'
+        });
+    }
 });
 
 /**
@@ -356,15 +783,30 @@ process.on('SIGINT', async () => {
  */
 async function startServer() {
     try {
-        // Check Inworld configuration
+        console.log('🚀 Starting TTSNewsReader Backend Server...');
+        
+        // Check Inworld AI configuration
         const inworldConfigured = checkInworldConfig();
+        
+        // Check News API configuration
+        const newsApiConfigured = checkNewsApiConfig();
         
         // Start Express server
         app.listen(PORT, () => {
             console.log(`🚀 TTSNewsReader Backend Server running on port ${PORT}`);
             console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
             console.log(`🔧 Inworld AI: ${inworldConfigured ? 'Configured' : 'Not configured'}`);
+            console.log(`📰 News API: ${newsApiConfigured ? 'Configured' : 'Not configured'}`);
             console.log(`📡 Health check: http://localhost:${PORT}/health`);
+            console.log(`🎵 Unified endpoint: http://localhost:${PORT}/news-audio`);
+            
+            if (!inworldConfigured) {
+                console.warn('⚠️  Warning: Inworld AI not properly configured. TTS will use fallback audio.');
+            }
+            
+            if (!newsApiConfigured) {
+                console.warn('⚠️  Warning: News API not configured. News fetching will fail.');
+            }
         });
     } catch (error) {
         console.error('❌ Failed to start server:', error);
