@@ -1,6 +1,6 @@
 # TTSNewsReader - Personalized Voice News/Feed Reader
 
-A beautiful iOS app built with SwiftUI that provides an immersive news reading experience using Text-to-Speech technology.
+A full-stack personalized voice news reader with an iOS SwiftUI app and Node.js backend, providing an immersive news reading experience using Text-to-Speech technology powered by Inworld AI.
 
 ## Features
 
@@ -28,11 +28,33 @@ A beautiful iOS app built with SwiftUI that provides an immersive news reading e
 - 🔍 **Progress Tracking**: Visual indicators for article progress
 - 🎨 **Gradient Backgrounds**: Attractive visual design
 
+## Architecture
+
+### **iOS App (Swift, SwiftUI)**
+- Fetches news headlines from NewsAPI.org
+- Sends text to Node.js backend for TTS generation
+- Plays audio using AVFoundation
+- Modern SwiftUI interface with haptic feedback
+- Analytics and engagement tracking
+
+### **Node.js Backend (Express)**
+- RESTful API for TTS generation
+- Inworld AI integration following official templates
+- Multi-language support
+- Error handling and health monitoring
+- CORS support for development
+
 ## Requirements
 
+### iOS App
 - iOS 15.0+
 - Xcode 13.0+
 - Swift 5.5+
+
+### Backend Server
+- Node.js 16.0+
+- npm or yarn
+- Inworld AI API credentials
 
 ## Setup Instructions
 

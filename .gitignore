@@ -1,0 +1,529 @@
+# TTSNewsReader - Comprehensive .gitignore
+
+# ===========================
+# Environment & Secrets
+# ===========================
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+*.env
+.env.*
+
+# API Keys and credentials
+config/secrets.json
+secrets/
+credentials/
+
+# ===========================
+# Node.js Backend
+# ===========================
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Grunt intermediate storage
+.grunt
+
+# Bower dependency directory
+bower_components
+
+# node-waf configuration
+.lock-wscript
+
+# Compiled binary addons
+build/Release
+
+# Dependency directories
+jspm_packages/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# parcel-bundler cache
+.cache
+.parcel-cache
+
+# Next.js build output
+.next
+
+# Nuxt.js build / generate output
+.nuxt
+dist
+
+# Gatsby files
+.cache/
+public
+
+# Storybook build outputs
+.out
+.storybook-out
+
+# Temporary folders
+tmp/
+temp/
+
+# ===========================
+# iOS/Swift/Xcode
+# ===========================
+# Build generated
+build/
+DerivedData/
+
+# Various settings
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+
+# Other
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+# Obj-C/Swift specific
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# CocoaPods
+Pods/
+*.xcworkspace
+!default.xcworkspace
+
+# Carthage
+Carthage/Build/
+
+# Accio dependency management
+Dependencies/
+.accio/
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Code Injection
+iOSInjectionProject/
+
+# Swift Package Manager
+.swiftpm/
+Package.resolved
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+
+# ===========================
+# Audio/Media Files
+# ===========================
+# Generated audio files
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.flac
+test_*.wav
+test_*.mp3
+audio_output/
+generated_audio/
+
+# ===========================
+# Logs
+# ===========================
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Diagnostic reports
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# ===========================
+# Runtime/Process Files
+# ===========================
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# ===========================
+# macOS
+# ===========================
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon must end with two \r
+Icon
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# ===========================
+# IDEs and Editors
+# ===========================
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# Local History for Visual Studio Code
+.history/
+
+# Windsurf IDE
+.windsurf/
+
+# IntelliJ
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# ===========================
+# Testing
+# ===========================
+# Jest
+coverage/
+.nyc_output
+
+# Cypress
+cypress/videos/
+cypress/screenshots/
+
+# ===========================
+# Backup files
+# ===========================
+*.bak
+*.backup
+*.old
+*.orig
+*.tmp
+
+# ===========================
+# Package managers
+# ===========================
+# Yarn
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# pnpm
+.pnpm-store/
+
+# ===========================
+# Miscellaneous
+# ===========================
+# Serverless directories
+.serverless/
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+# TernJS port file
+.tern-port
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# yarn v2
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# Local development
+local/
+dev/
+debug/
+
+# Documentation build
+docs/build/
+
+# Temporary test files
+test_output/
+*.test.js.snap
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache directories
+.cache/
+cache/
+
+# Lock files (optional - uncomment if you want to ignore them)
+# package-lock.json
+# yarn.lock
+
+# ===========================
+# Project Specific
+# ===========================
+# Inworld templates (if not needed in repo)
+templates-*/
+
+# Generated documentation
+api-docs/
+
+# Deployment artifacts
+deploy/
+deployment/
+
+# Performance monitoring
+.clinic/
+clinic.json
+
+# Webpack
+.webpack/
+
+# ESLint
+.eslintcache
+
+# Prettier
+.prettierignore
+
+# TypeScript
+*.tsbuildinfo
+
+# Rollup
+.rollup.cache/
+
+# Vite
+.vite/
+
+# SvelteKit
+.svelte-kit/
+
+# Remix
+.remix/
+
+# Astro
+.astro/
+
+# Solid
+.solid/
+
+# Qwik
+.qwik/
+
+# Parcel
+.parcel-cache/
+
+# Turborepo
+.turbo/
+
+# Vercel
+.vercel/
+
+# Netlify
+.netlify/
+
+# Firebase
+.firebase/
+
+# Supabase
+.supabase/
+
+# Planetscale
+.pscale/
+
+# Railway
+.railway/
+
+# Fly.io
+.fly/
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Kubernetes
+*.kubeconfig
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Ansible
+*.retry
+
+# Vagrant
+.vagrant/
+
+# VirtualBox
+*.vbox-prev
+
+# VMware
+*.vmx
+*.vmdk
+*.nvram
+*.vmem
+*.vmsd
+*.vmsn
+*.vmss
+*.vmtm
+
+# Parallels
+*.pvm/
+
+# QEMU
+*.qcow2
+*.img
+
+# Cloud9
+.c9/
+
+# Eclipse
+.metadata
+bin/
+tmp/
+*.tmp
+*.bak
+*.swp
+*~.nib
+local.properties
+.settings/
+.loadpath
+.recommenders
+
+# External tool builders
+.externalToolBuilders/
+
+# Locally stored "Eclipse launch configurations"
+*.launch
+
+# PyDev specific (Python)
+*.pydevproject
+
+# CDT-specific (C/C++)
+.cproject
+
+# CDT- autotools
+.autotools
+
+# Java annotation processor (APT)
+.factorypath
+
+# PDT-specific (PHP)
+.buildpath
+
+# sbteclipse plugin
+.target
+
+# Tern plugin
+.tern-project
+
+# TeXlipse plugin
+.texlipse
+
+# STS (Spring Tool Suite)
+.springBeans
+
+# Code Recommenders
+.recommenders/
+
+# Annotation Processing
+.apt_generated/
+.apt_generated_test/
+
+# Scala IDE specific (Scala & Java)
+.cache-main
+.scala_dependencies
+.worksheet
+
+# Uncomment this line if you wish to ignore the project description file
+# .project
+
+# Uncomment this line if you wish to ignore the project settings
+# .settings/
+
+# End of .gitignore

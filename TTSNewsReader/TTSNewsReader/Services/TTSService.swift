@@ -18,8 +18,8 @@ class TTSService: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var currentText: String = ""
     
     private var audioPlayer: AVAudioPlayer?
-    private let inworldAPIKey = APIConfiguration.inworldAPIKey
-    private let inworldBaseURL = APIConfiguration.inworldBaseURL
+    // Backend server configuration
+    private let backendBaseURL = "http://localhost:3000"
     
     // Audio session setup
     override init() {
@@ -56,38 +56,32 @@ class TTSService: NSObject, ObservableObject, AVAudioPlayerDelegate {
         }
     }
     
-    // MARK: - Generate Speech from Inworld AI
+    // MARK: - Generate Speech from Backend Server
     private func generateSpeech(text: String, language: TTSLanguage) async throws -> Data {
-        // Check if API is configured
-        guard APIConfiguration.isInworldAPIConfigured else {
-            throw TTSError.apiNotConfigured
-        }
-        
-        // Use the correct Inworld AI TTS endpoint
-        guard let url = URL(string: "\(inworldBaseURL)/voice") else {
+        // Use the Node.js backend TTS endpoint
+        guard let url = URL(string: "\(backendBaseURL)/tts") else {
             throw TTSError.invalidURL
         }
         
-        // Prepare the request body according to Inworld AI API documentation
+        // Prepare the request body for the backend API
         let requestBody: [String: Any] = [
             "text": text,
-            "voiceId": getVoiceIdForLanguage(language),
-            "modelId": "inworld-tts-1"
+            "language": language.rawValue,
+            "voice": "default"
         ]
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        
-        // Use Basic Authentication as per Inworld AI documentation
-        let base64Credentials = Data(inworldAPIKey.utf8).base64EncodedString()
-        request.setValue("Basic \(base64Credentials)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30.0 // 30 second timeout for TTS generation
         
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         } catch {
             throw TTSError.invalidRequest
         }
+        
+        print("🎤 Sending TTS request to backend: \(text.prefix(50))...")
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -96,50 +90,91 @@ class TTSService: NSObject, ObservableObject, AVAudioPlayerDelegate {
         }
         
         guard httpResponse.statusCode == 200 else {
-            print("Inworld AI API Error: Status \(httpResponse.statusCode)")
+            print("❌ Backend TTS API Error: Status \(httpResponse.statusCode)")
+            
+            // Try to parse error response
             if let responseData = String(data: data, encoding: .utf8) {
                 print("Response: \(responseData)")
+                
+                // Check if it's a JSON error response
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let error = json["error"] as? String {
+                    throw TTSError.backendError(error)
+                }
             }
+            
             throw TTSError.apiError(httpResponse.statusCode)
         }
         
-        // Parse the response to extract audio data according to Inworld AI format
-        do {
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let audioBase64 = json["audioContent"] as? String,
-               let audioData = Data(base64Encoded: audioBase64) {
-                return audioData
-            } else {
-                print("Invalid response format from Inworld AI")
-                throw TTSError.invalidResponse
-            }
-        } catch {
-            print("Failed to parse Inworld AI response: \(error)")
+        // The backend returns raw audio data (WAV format)
+        guard !data.isEmpty else {
+            print("❌ Empty audio data received from backend")
             throw TTSError.invalidResponse
+        }
+        
+        print("✅ Received audio data from backend: \(data.count) bytes")
+        return data
+    }
+    
+    // MARK: - Backend Health Check
+    func checkBackendHealth() async -> Bool {
+        guard let url = URL(string: "\(backendBaseURL)/health") else {
+            return false
+        }
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                return false
+            }
+            
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let status = json["status"] as? String {
+                return status == "ok"
+            }
+            
+            return false
+        } catch {
+            print("❌ Backend health check failed: \(error)")
+            return false
         }
     }
     
-    // MARK: - Get Voice ID for Language
-    private func getVoiceIdForLanguage(_ language: TTSLanguage) -> String {
-        switch language {
-        case .english:
-            return "Hades" // You can customize voice IDs based on available voices
-        case .spanish:
-            return "Hades"
-        case .french:
-            return "Hades"
-        case .german:
-            return "Hades"
-        case .italian:
-            return "Hades"
-        case .portuguese:
-            return "Hades"
-        case .japanese:
-            return "Hades"
-        case .korean:
-            return "Hades"
-        case .chinese:
-            return "Hades"
+    // MARK: - Get Supported Voices from Backend
+    func getSupportedVoices() async -> [TTSVoice] {
+        guard let url = URL(string: "\(backendBaseURL)/voices") else {
+            return []
+        }
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                return []
+            }
+            
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let success = json["success"] as? Bool,
+               success,
+               let voicesArray = json["voices"] as? [[String: Any]] {
+                
+                return voicesArray.compactMap { voiceDict in
+                    guard let code = voiceDict["code"] as? String,
+                          let name = voiceDict["name"] as? String,
+                          let voice = voiceDict["voice"] as? String else {
+                        return nil
+                    }
+                    return TTSVoice(code: code, name: name, voice: voice)
+                }
+            }
+            
+            return []
+        } catch {
+            print("❌ Failed to fetch supported voices: \(error)")
+            return []
         }
     }
     
@@ -232,6 +267,13 @@ class TTSService: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
 }
 
+// MARK: - TTS Voice Model
+struct TTSVoice {
+    let code: String
+    let name: String
+    let voice: String
+}
+
 // MARK: - TTS Errors
 enum TTSError: Error {
     case networkError
@@ -241,6 +283,8 @@ enum TTSError: Error {
     case invalidURL
     case invalidRequest
     case apiError(Int)
+    case backendError(String)
+    case backendUnavailable
     
     var localizedDescription: String {
         switch self {
@@ -258,6 +302,10 @@ enum TTSError: Error {
             return "Invalid API request"
         case .apiError(let statusCode):
             return "API error with status code: \(statusCode)"
+        case .backendError(let message):
+            return "Backend error: \(message)"
+        case .backendUnavailable:
+            return "TTS backend service is unavailable"
         }
     }
 }
